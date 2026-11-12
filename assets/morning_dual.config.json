@@ -1,0 +1,24 @@
+{
+  "timezone": "Asia/Shanghai",
+  "calendar_ics": null,
+  "timeout_seconds": 20,
+  "watchlist": [
+    {
+      "name": "OpenAI News",
+      "url": "https://openai.com/news/rss.xml"
+    },
+    {
+      "name": "OpenAI Python SDK Releases",
+      "url": "https://github.com/openai/openai-python/releases.atom"
+    },
+    {
+      "name": "Anthropic Python SDK Releases",
+      "url": "https://github.com/anthropics/anthropic-sdk-python/releases.atom"
+    }
+  ],
+  "budget": {
+    "max_fetches": 12,
+    "max_llm_calls": 0,
+    "timeout_seconds": 120
+  }
+}

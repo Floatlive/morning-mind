@@ -1,0 +1,13 @@
+{
+  "timezone": "Asia/Shanghai",
+  "schedule_local_time": null,
+  "calendar_provider": null,
+  "calendar_id": null,
+  "working_hours": null,
+  "watchlist": [],
+  "budget": {
+    "max_fetches": 12,
+    "max_llm_calls": 16,
+    "timeout_seconds": 180
+  }
+}
