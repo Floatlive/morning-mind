@@ -17,10 +17,18 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-TZ = ZoneInfo("Asia/Shanghai")
+DEFAULT_TIMEZONE = "Asia/Shanghai"
+
+
+def configured_timezone(config: dict) -> ZoneInfo:
+    name = config.get("timezone", DEFAULT_TIMEZONE)
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"无效时区：{name}") from exc
 
 
 def atomic_json(path: Path, data: dict) -> None:
@@ -84,6 +92,45 @@ def unfold_ics(lines: list[str]) -> list[str]:
     return result
 
 
+def ics_date(value: str) -> date | None:
+    match = re.search(r"(\d{4})(\d{2})(\d{2})", value)
+    if not match:
+        return None
+    return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def rrule_values(value: str) -> dict[str, str]:
+    return {key.upper(): item for key, _, item in (part.partition("=") for part in value.split(";")) if key and item}
+
+
+def event_occurs_on(event: dict, target: date) -> bool:
+    start = event.get("start")
+    if not isinstance(start, date) or target < start or target in event.get("exdates", set()):
+        return False
+    rule = event.get("rrule")
+    if not rule:
+        return start == target
+    values = rrule_values(rule)
+    frequency = values.get("FREQ")
+    interval = int(values.get("INTERVAL", "1"))
+    if interval < 1:
+        return False
+    until = ics_date(values["UNTIL"]) if values.get("UNTIL") else None
+    if until and target > until:
+        return False
+    days = (target - start).days
+    if frequency == "DAILY":
+        occurrence_index = days // interval
+        matches = days % interval == 0
+    elif frequency == "WEEKLY":
+        occurrence_index = days // (7 * interval)
+        matches = days % (7 * interval) == 0
+    else:
+        return False
+    count = int(values.get("COUNT", "0"))
+    return matches and (count == 0 or occurrence_index < count)
+
+
 def calendar_summary(path: Path | None, target: date) -> tuple[str, list[dict]]:
     if path is None or not path.exists():
         return "日程不可读：未配置可读的 .ics 文件", []
@@ -93,7 +140,7 @@ def calendar_summary(path: Path | None, target: date) -> tuple[str, list[dict]]:
         if line == "BEGIN:VEVENT":
             active = {}
         elif line == "END:VEVENT" and active is not None:
-            if active.get("date") == target.isoformat():
+            if event_occurs_on(active, target):
                 events.append(active)
             active = None
         elif active is not None:
@@ -102,9 +149,11 @@ def calendar_summary(path: Path | None, target: date) -> tuple[str, list[dict]]:
             if key == "SUMMARY":
                 active["summary"] = value
             elif key == "DTSTART":
-                match = re.search(r"(\d{4})(\d{2})(\d{2})", value)
-                if match:
-                    active["date"] = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+                active["start"] = ics_date(value)
+            elif key == "RRULE":
+                active["rrule"] = value
+            elif key == "EXDATE":
+                active["exdates"] = {parsed for item in value.split(",") if (parsed := ics_date(item))}
     if not events:
         return "日程可读：今日没有解析到事件", []
     return f"日程可读：今日解析到 {len(events)} 个事件", events
@@ -112,6 +161,7 @@ def calendar_summary(path: Path | None, target: date) -> tuple[str, list[dict]]:
 
 def run(config_path: Path, state_path: Path, output_path: Path, today: date) -> dict:
     config = load_json(config_path, {})
+    timezone = configured_timezone(config)
     state = load_json(state_path, {"version": 1, "feeds": {}})
     state.setdefault("feeds", {})
     notes = []
@@ -139,7 +189,7 @@ def run(config_path: Path, state_path: Path, output_path: Path, today: date) -> 
             elif previous.get("content_hash") != current_hash:
                 old = {item["fingerprint"] for item in previous.get("items", [])}
                 changed.extend([item for item in items if item["fingerprint"] not in old])
-            state["feeds"][name] = {"url": url, "content_hash": current_hash, "items": items, "last_read": datetime.now(TZ).isoformat(timespec="seconds")}
+            state["feeds"][name] = {"url": url, "content_hash": current_hash, "items": items, "last_read": datetime.now(timezone).isoformat(timespec="seconds")}
         except Exception as exc:  # network and malformed-feed failures are reported, not hidden
             failures.append(f"{name}: 不可读（{type(exc).__name__}）")
     status = "ok" if not failures else ("degraded" if len(failures) == len(config.get("watchlist", [])) else "partial")
@@ -165,7 +215,7 @@ def run(config_path: Path, state_path: Path, output_path: Path, today: date) -> 
     atomic_json(state_path, state)
     run_log = output_path.parent / "runs.jsonl"
     with run_log.open("a", encoding="utf-8", newline="\n") as stream:
-        stream.write(json.dumps({"run_at": datetime.now(TZ).isoformat(timespec="seconds"), "status": status, "fetches": fetch_count, "items": len(changed), "failures": failures}, ensure_ascii=False) + "\n")
+        stream.write(json.dumps({"run_at": datetime.now(timezone).isoformat(timespec="seconds"), "status": status, "fetches": fetch_count, "items": len(changed), "failures": failures}, ensure_ascii=False) + "\n")
     return {"status": status, "fetches": fetch_count, "changes": len(changed), "baseline_sources": baseline_count, "failures": failures, "output": str(output_path)}
 
 
@@ -174,10 +224,11 @@ def main() -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--date", type=date.fromisoformat, default=datetime.now(TZ).date())
+    parser.add_argument("--date", type=date.fromisoformat)
     args = parser.parse_args()
     try:
-        result = run(args.config, args.state, args.output, args.date)
+        config = load_json(args.config, {})
+        result = run(args.config, args.state, args.output, args.date or datetime.now(configured_timezone(config)).date())
     except Exception as exc:
         print(json.dumps({"status": "failed", "error": str(exc)}, ensure_ascii=False))
         return 2
