@@ -1,4 +1,8 @@
 state/
 output/
+assets/morning_dual.config.json
+*.ics
+*.jsonl
+.pytest_cache/
 __pycache__/
 *.pyc

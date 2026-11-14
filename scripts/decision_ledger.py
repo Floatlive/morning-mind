@@ -9,14 +9,20 @@ import json
 import os
 import re
 import tempfile
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any
 
 
+try:
+    TZ = ZoneInfo("Asia/Shanghai")
+except ZoneInfoNotFoundError:
+    TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
+
+
 def now_local() -> datetime:
-    return datetime.now(ZoneInfo("Asia/Shanghai"))
+    return datetime.now(TZ)
 
 
 def today_local() -> date:
@@ -70,8 +76,8 @@ def normalize_expectation(value: str) -> str:
 
 def due_items(data: dict[str, Any], on: date) -> list[dict[str, Any]]:
     return sorted(
-        (item for item in data["items"] if item.get("status") == "pending" and parse_day(item["revisit_date"], "revisit_date") <= on),
-        key=lambda item: (item["revisit_date"], item["id"]),
+        (item for item in data["items"] if item.get("status") in ("pending", "awaiting_actual") and parse_day(item["revisit_date"], "revisit_date") <= on),
+        key=lambda item: (item["status"] != "pending", item["revisit_date"], item["id"]),
     )
 
 
@@ -134,7 +140,7 @@ def main() -> int:
     add.add_argument("--revisit-days", type=int, default=90)
     add.add_argument("--today", type=lambda s: parse_day(s, "today"), default=today_local())
 
-    due = subs.add_parser("due", help="列出到期记录，不修改账本")
+    due = subs.add_parser("due", help="列出到期且未关闭的记录，不修改账本")
     due.add_argument("--on", type=lambda s: parse_day(s, "on"), default=today_local())
     due.add_argument("--limit", type=int, default=3)
 

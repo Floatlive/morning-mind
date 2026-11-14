@@ -67,11 +67,11 @@ class DecisionLedgerTests(unittest.TestCase):
             ledger.load_ledger(self.path)
         self.assertEqual(self.path.read_bytes(), before)
 
-    def test_due_only_pending_and_limit_is_external_selection(self):
+    def test_due_includes_awaiting_actual_without_closed_items(self):
         item = self.add()
         data = ledger.load_ledger(self.path)
         data["items"][0]["status"] = "awaiting_actual"
-        self.assertEqual(ledger.due_items(data, date(2026, 12, 1)), [])
+        self.assertEqual([entry["id"] for entry in ledger.due_items(data, date(2026, 12, 1))], [item["id"]])
 
 
 if __name__ == "__main__":

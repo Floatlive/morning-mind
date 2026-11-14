@@ -4,10 +4,12 @@
 
 **Morning Mind** 是一个本地优先的个人 Agent 工作流原型，把每天的信息整理和长期决策复盘放在一个小型、可检查的工具集中。它包含两部分：
 
-- **A · 晨间双流**：读取可选的本地日历 `.ics` 文件，并检查公开 RSS/Atom 订阅源相对上次成功读取的新增条目，生成 Markdown 简报。
+- **A · 晨间双流**：读取今明两天的本地日历 `.ics` 文件，并检查公开 RSS/Atom 订阅源相对上次成功读取的新增条目；可只读展示决策回访。
 - **B · 决策快照**：把判断、依据、可验证预期和把握度写入本地 JSON 账本；到期后由用户确认回访是否送达，再记录实际结果。
 
-这个仓库目前提供的是**本地可运行的 MVP**，不是托管式服务，也不是连接了真实日历、邮件或消息账户的在线智能体。它不需要 API key，也没有运行时第三方 Python 依赖。
+这个仓库目前提供的是**本地可运行的 MVP**，不是托管式服务，也不是连接了真实日历、邮件或消息账户的在线智能体。它不需要 API key；Windows 需要 `tzdata` 提供 IANA 时区数据。
+
+`v0.2.0` 增加今明日程、订阅源发布日期与完整基线、到期决策回访；旧版最多十条的订阅源快照会按重合条目谨慎迁移。简报仍只生成本地文件，没有实时文字推送、自动重试或送达确认。
 
 ## 目录
 
@@ -36,7 +38,7 @@
 
 - Python 3.11 或更高版本
 - Git（克隆仓库时需要）
-- 运行脚本和测试不需要安装第三方 Python 包
+- Windows 需安装时区数据：运行 `python -m pip install tzdata`；macOS/Linux 通常使用系统时区数据库。
 
 克隆仓库：
 
@@ -49,7 +51,13 @@ Windows PowerShell 同样可以使用以上 Git 命令。以下命令也适用�
 
 ## 快速开始
 
-先用仓库内配置运行 A：
+先从公开模板创建本机配置；PowerShell：
+
+```powershell
+Copy-Item assets/morning_dual.config.template.json assets/morning_dual.config.json
+```
+
+macOS/Linux 可用 `cp`。按需修改本机配置后运行 A（PowerShell 可把下面命令写成单行）：
 
 ```bash
 python scripts/morning_dual.py \
@@ -58,7 +66,7 @@ python scripts/morning_dual.py \
   --output output/morning/today.md
 ```
 
-第一次运行会建立订阅源基线，并在终端输出 JSON 运行摘要；Markdown 简报写入 `output/morning/today.md`。状态文件与 `output/` 均被 `.gitignore` 排除。
+第一次运行会建立订阅源基线，并在终端输出 JSON 运行摘要；Markdown 简报写入 `output/morning/today.md`。状态、实际配置与输出均被 `.gitignore` 排除。
 
 首次运行会显示“日程不可读：未配置可读的 `.ics` 文件”，因为示例配置中的 `calendar_ics` 默认为 `null`。这是刻意的：没有日历输入时，工具不会假装日历为空。
 
@@ -85,9 +93,9 @@ python scripts/morning_dual.py \
 - `timezone`：IANA 时区名称，例如 `Asia/Shanghai` 或 `America/New_York`。未通过 `--date` 指定日期时，它决定“当天”的计算以及状态/运行日志的时间戳。
 - `calendar_ics`：可选的本地 `.ics` 文件路径；留空时会明确报告日历不可读。
 - `timeout_seconds`：单个订阅源请求的超时秒数。当前示例配置使用 20 秒。
-- `watchlist`：需要读取的 RSS/Atom 源列表，每项填写名称和 URL。默认配置包含 OpenAI News、OpenAI Python SDK Releases、Anthropic Python SDK Releases。
+- `watchlist`：需要读取的 RSS/Atom 源列表，每项填写名称和 URL。公开模板包含 OpenAI News、OpenAI Python SDK Releases、Anthropic Python SDK Releases 三个示例。
 
-仓库还包含 `assets/morning_dual.config.template.json` 作为配置结构参考。首次运行状态保存在 `--state` 指定的 JSON 文件中；后续运行沿用它来区分新增条目。使用不同状态文件会重新建立基线。
+仓库中的 `assets/morning_dual.config.template.json` 只含公开示例源。首次运行状态保存在 `--state` 指定的 JSON 文件中；后续运行沿用它来区分新增条目。使用不同状态文件会重新建立基线。
 
 ### 指定日期并保存输出
 
@@ -99,18 +107,20 @@ python scripts/morning_dual.py \
   --date 2026-11-13
 ```
 
-`--date` 用于选择简报日期，格式为 `YYYY-MM-DD`；省略时默认使用上海时区的当天。脚本会：
+`--date` 用于选择简报日期，格式为 `YYYY-MM-DD`；省略时使用配置时区的当天。脚本会：
 
-1. 解析当天的日历事件（如果配置了可读的 `.ics` 文件）。支持单次事件，以及每日/每周的基础重复事件。
+1. 解析今天和明天的日历事件（如果配置了可读的 `.ics` 文件）。支持单次事件，以及每日/每周的基础重复事件。
 2. 读取配置中的 RSS/Atom 源，并与上次成功保存的条目快照比较。
-3. 生成简报，列出新增条目及来源链接。
-4. 更新状态 JSON，并在输出目录追加一行 `runs.jsonl` 运行记录。
+3. 生成简报，列出新增条目的来源、发布日期和链接，并可展示到期决策回访。
+4. 更新状态 JSON，并在状态目录追加一行 `runs.jsonl` 运行记录。
 
-简报状态输出中的 `ok`、`partial`、`degraded` 等用于概括监控源抓取状态。日历不可读会写入简报，但不代表脚本已连接日历服务或完成日历验证。
+日历或账本不可读时，简报会标明。日历不可读使运行状态成为 `partial`（监控源全部失败时为 `degraded`）。这不代表脚本已连接日历服务或完成投递。
+
+通过 `--ledger state/decision_ledger.json` 可只读加入到期决策回访。晨报展示最多三条，含判断、依据、可验证预期、把握度、状态和回访截止日期；`pending` 与 `awaiting_actual` 都会列出。账本缺失或损坏会标记不可读，晨报不会修改账本或确认送达。
 
 ### 日历与订阅源的边界
 
-`.ics` 解析支持单次事件，以及 `FREQ=DAILY`、`FREQ=WEEKLY` 的 `RRULE`，并识别 `INTERVAL`、`COUNT`、`UNTIL` 与 `EXDATE`。不支持月度/年度规则、按工作日筛选、时区覆盖、重复实例修改或完整 RFC 5545 兼容性；需要这些功能时，必须先补充解析能力和真实样本测试。
+`.ics` 解析支持单次事件，以及 `FREQ=DAILY`、`FREQ=WEEKLY` 的基础 `RRULE`，并识别 `INTERVAL`、`COUNT`、`UNTIL` 与 `EXDATE`。事件时间会转到配置时区。不支持月度/年度规则、按工作日筛选、重复实例修改或完整 RFC 5545 兼容性；遇到不支持的规则会报告日历不可读。
 
 项目使用 RSS/Atom 源当前返回的条目做快照比较，并为条目生成基于来源、标题和链接的指纹。它不是可靠的事件流或永久归档：如果源移除了旧条目、重排内容或只保留有限数量的近期条目，快照可能无法代表期间发生的全部更新。抓取或解析失败会被报告；不要把失败解释为“没有新内容”。
 
@@ -144,7 +154,7 @@ python scripts/decision_ledger.py --ledger state/decision_ledger.json add \
 ### 查询和关闭到期记录
 
 ```bash
-# 列出已到期且仍处于 pending 状态的记录
+# 列出已到期且未关闭的记录（pending 或 awaiting_actual）
 python scripts/decision_ledger.py --ledger state/decision_ledger.json due --limit 3
 
 # 只有在你确认已经收到/送达回访卡后，才执行状态迁移
@@ -174,13 +184,13 @@ add -> pending -> mark-sent -> awaiting_actual -> close -> closed
 
 | 路径 | 内容 | 是否应提交到 Git |
 | --- | --- | --- |
-| `assets/morning_dual.config.json` | 订阅源和可选日历路径配置 | 仅在不含个人路径或隐私信息时提交 |
+| `assets/morning_dual.config.json` | 订阅源和可选日历路径配置 | 否；只提交模板 |
 | `state/morning_dual.json` | 上次成功读取的订阅源快照 | 否 |
 | `state/decision_ledger.json` | 私人判断、依据、预期与实际结果 | 否 |
 | `output/morning/*.md` | 生成的晨间简报 | 通常否 |
-| `output/morning/runs.jsonl` | 每次运行的摘要日志 | 通常否 |
+| `state/runs.jsonl` | 每次运行的摘要日志 | 否 |
 
-默认 `.gitignore` 排除了 `state/` 和 `output/`。账本与状态文件会通过同目录临时文件写入，再以原子替换更新；若账本 JSON 损坏或结构不符合预期，CLI 会停止并保留原文件，不会尝试猜测修复。
+默认 `.gitignore` 排除了 `state/`、`output/` 和实际配置。账本与状态文件会通过同目录临时文件写入，再以原子替换更新；若账本 JSON 损坏或结构不符合预期，CLI 会停止并保留原文件，不会尝试猜测修复。
 
 工具按**单写入者**场景设计。如果你通过多个并行定时任务或多个进程同时更新同一状态文件，应先加入文件锁或版本检查机制。
 
@@ -194,7 +204,7 @@ add -> pending -> mark-sent -> awaiting_actual -> close -> closed
 python -m unittest discover -s tests -v
 ```
 
-测试覆盖订阅条目解析、未配置日历时的明确提示、首次运行建基线、决策去重、到期查询、含糊预期拒绝和损坏账本保护。GitHub Actions 会在推送和 Pull Request 时运行同一测试命令。
+测试覆盖订阅条目解析、空源与旧快照、今明日程与基础重复、时区转换、决策回访只读联动、到期查询、含糊预期拒绝和损坏账本保护。GitHub Actions 会在推送和 Pull Request 时运行同一测试命令。
 
 ## 安全与隐私
 
